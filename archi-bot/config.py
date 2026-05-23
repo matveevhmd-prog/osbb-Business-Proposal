@@ -14,6 +14,7 @@ class Config:
     anthropic_api_key: str
     owner_telegram_id: int
     company_name: str
+    abmk_file_id: str
 
 
 def load_config() -> Config:
@@ -33,6 +34,7 @@ def load_config() -> Config:
         anthropic_api_key=require("ANTHROPIC_API_KEY"),
         owner_telegram_id=int(os.getenv("OWNER_TELEGRAM_ID", "0") or "0"),
         company_name=require("COMPANY_NAME"),
+        abmk_file_id=require("ABMK_FILE_ID"),
     )
 
     if not os.getenv("OWNER_TELEGRAM_ID", "").strip():
