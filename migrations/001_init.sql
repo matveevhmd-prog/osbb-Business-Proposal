@@ -1,17 +1,6 @@
-"""Supabase client singleton and table-schema SQL (for migrations)."""
-from __future__ import annotations
+-- Run this once in the Supabase SQL Editor before starting the bot.
+-- Project Settings → SQL Editor → New query → paste → Run
 
-import logging
-from typing import Optional
-
-from supabase import AsyncClient, acreate_client
-
-logger = logging.getLogger(__name__)
-
-_client: Optional[AsyncClient] = None
-
-# Run this SQL once in the Supabase SQL Editor (also lives in migrations/001_init.sql).
-MIGRATION_SQL = """
 CREATE TABLE IF NOT EXISTS users (
     telegram_id  BIGINT  PRIMARY KEY,
     name         TEXT    NOT NULL,
@@ -63,24 +52,9 @@ CREATE TABLE IF NOT EXISTS fsm_storage (
     data     JSONB  NOT NULL DEFAULT '{}',
     PRIMARY KEY (bot_id, chat_id, user_id, destiny)
 );
-"""
 
-
-async def init_db(url: str, key: str) -> None:
-    global _client
-    _client = await acreate_client(url, key)
-    try:
-        await _client.table("users").select("telegram_id").limit(1).execute()
-    except Exception as exc:
-        raise RuntimeError(
-            f"Supabase connection failed or tables are missing.\n"
-            f"Run migrations/001_init.sql in the Supabase SQL Editor first.\n"
-            f"Error: {exc}"
-        ) from exc
-    logger.info("Supabase connected")
-
-
-def get_client() -> AsyncClient:
-    if _client is None:
-        raise RuntimeError("Database not initialised — call init_db() first")
-    return _client
+-- Disable RLS on all tables so the service_role key has full access.
+ALTER TABLE users        DISABLE ROW LEVEL SECURITY;
+ALTER TABLE projects     DISABLE ROW LEVEL SECURITY;
+ALTER TABLE weekly_fdr   DISABLE ROW LEVEL SECURITY;
+ALTER TABLE fsm_storage  DISABLE ROW LEVEL SECURITY;

@@ -16,6 +16,8 @@ class Config:
     anthropic_api_key: Optional[str]
     owner_telegram_id: int
     company_name: str
+    supabase_url: str
+    supabase_key: str
 
 
 def load_config() -> Config:
@@ -36,6 +38,8 @@ def load_config() -> Config:
         anthropic_api_key=optional("ANTHROPIC_API_KEY"),
         owner_telegram_id=int(os.getenv("OWNER_TELEGRAM_ID", "0") or "0"),
         company_name=require("COMPANY_NAME"),
+        supabase_url=require("SUPABASE_URL"),
+        supabase_key=require("SUPABASE_KEY"),
     )
 
     if cfg.anthropic_api_key is None:

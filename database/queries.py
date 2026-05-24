@@ -1,15 +1,13 @@
 from __future__ import annotations
 
-import aiosqlite
 from dataclasses import dataclass
-from datetime import date
 from typing import Optional
 
-from database.models import DB_PATH
+from database.models import get_client
 
 
 # ---------------------------------------------------------------------------
-# Dataclasses (lightweight row representations)
+# Dataclasses
 # ---------------------------------------------------------------------------
 
 @dataclass
@@ -55,54 +53,31 @@ class WeeklyFdr:
 
 
 # ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-def _conn():
-    return aiosqlite.connect(DB_PATH)
-
-
-# ---------------------------------------------------------------------------
 # Users
 # ---------------------------------------------------------------------------
 
 async def upsert_user(user: User) -> None:
-    async with _conn() as db:
-        await db.execute("PRAGMA foreign_keys = ON")
-        await db.execute(
-            """
-            INSERT INTO users (telegram_id, name, role, company_id)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(telegram_id) DO UPDATE SET
-                name       = excluded.name,
-                role       = excluded.role,
-                company_id = excluded.company_id
-            """,
-            (user.telegram_id, user.name, user.role, user.company_id),
-        )
-        await db.commit()
+    sb = get_client()
+    await sb.table("users").upsert({
+        "telegram_id": user.telegram_id,
+        "name": user.name,
+        "role": user.role,
+        "company_id": user.company_id,
+    }).execute()
 
 
 async def get_user(telegram_id: int) -> Optional[User]:
-    async with _conn() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM users WHERE telegram_id = ?", (telegram_id,)
-        ) as cur:
-            row = await cur.fetchone()
-    if row is None:
+    sb = get_client()
+    resp = await sb.table("users").select("*").eq("telegram_id", telegram_id).execute()
+    if not resp.data:
         return None
-    return User(**dict(row))
+    return User(**resp.data[0])
 
 
 async def get_all_pms() -> list[User]:
-    async with _conn() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM users WHERE role = 'pm'"
-        ) as cur:
-            rows = await cur.fetchall()
-    return [User(**dict(r)) for r in rows]
+    sb = get_client()
+    resp = await sb.table("users").select("*").eq("role", "pm").execute()
+    return [User(**r) for r in resp.data]
 
 
 # ---------------------------------------------------------------------------
@@ -119,53 +94,44 @@ async def insert_project(
     planned_completion_date: Optional[str] = None,
     status: str = "active",
 ) -> int:
-    async with _conn() as db:
-        await db.execute("PRAGMA foreign_keys = ON")
-        cur = await db.execute(
-            """
-            INSERT INTO projects
-                (code, name, pm_id, contract_total, planned_hours,
-                 planned_margin_pct, planned_completion_date, status)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            """,
-            (code, name, pm_id, contract_total, planned_hours,
-             planned_margin_pct, planned_completion_date, status),
-        )
-        await db.commit()
-        return cur.lastrowid
+    sb = get_client()
+    resp = await sb.table("projects").insert({
+        "code": code,
+        "name": name,
+        "pm_id": pm_id,
+        "contract_total": contract_total,
+        "planned_hours": planned_hours,
+        "planned_margin_pct": planned_margin_pct,
+        "planned_completion_date": planned_completion_date,
+        "status": status,
+    }).execute()
+    return resp.data[0]["id"]
 
 
 async def get_project_by_code(code: str) -> Optional[Project]:
-    async with _conn() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM projects WHERE code = ?", (code,)
-        ) as cur:
-            row = await cur.fetchone()
-    if row is None:
+    sb = get_client()
+    resp = await sb.table("projects").select("*").eq("code", code).execute()
+    if not resp.data:
         return None
-    return Project(**dict(row))
+    return Project(**resp.data[0])
 
 
 async def get_projects_for_pm(pm_id: int, status: str = "active") -> list[Project]:
-    async with _conn() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM projects WHERE pm_id = ? AND status = ?",
-            (pm_id, status),
-        ) as cur:
-            rows = await cur.fetchall()
-    return [Project(**dict(r)) for r in rows]
+    sb = get_client()
+    resp = (
+        await sb.table("projects")
+        .select("*")
+        .eq("pm_id", pm_id)
+        .eq("status", status)
+        .execute()
+    )
+    return [Project(**r) for r in resp.data]
 
 
 async def get_all_active_projects() -> list[Project]:
-    async with _conn() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM projects WHERE status = 'active'"
-        ) as cur:
-            rows = await cur.fetchall()
-    return [Project(**dict(r)) for r in rows]
+    sb = get_client()
+    resp = await sb.table("projects").select("*").eq("status", "active").execute()
+    return [Project(**r) for r in resp.data]
 
 
 async def update_project_field(code: str, field: str, value: object) -> bool:
@@ -175,12 +141,9 @@ async def update_project_field(code: str, field: str, value: object) -> bool:
     }
     if field not in allowed:
         raise ValueError(f"Field '{field}' is not updatable via this function")
-    async with _conn() as db:
-        cur = await db.execute(
-            f"UPDATE projects SET {field} = ? WHERE code = ?", (value, code)
-        )
-        await db.commit()
-        return cur.rowcount > 0
+    sb = get_client()
+    resp = await sb.table("projects").update({field: value}).eq("code", code).execute()
+    return len(resp.data) > 0
 
 
 # ---------------------------------------------------------------------------
@@ -193,83 +156,60 @@ async def upsert_weekly_fdr(
     week_date: str,
     **fields,
 ) -> None:
-    columns = [
-        "actual_readiness_pct", "planned_readiness_pct", "planned_hours_remaining",
-        "etc_hours", "next_act_amount", "next_act_date", "planned_margin_pct",
-        "forecast_margin_pct", "plan_next_week", "comments", "problems",
-        "help_needed", "row_status",
-    ]
-    update_pairs = ", ".join(f"{c} = excluded.{c}" for c in columns if c in fields)
-    col_names = ", ".join(fields.keys())
-    placeholders = ", ".join("?" * len(fields))
-
-    async with _conn() as db:
-        await db.execute("PRAGMA foreign_keys = ON")
-        await db.execute(
-            f"""
-            INSERT INTO weekly_fdr (project_id, pm_id, week_date, {col_names})
-            VALUES (?, ?, ?, {placeholders})
-            ON CONFLICT(project_id, week_date) DO UPDATE SET {update_pairs}
-            """,
-            (project_id, pm_id, week_date, *fields.values()),
-        )
-        await db.commit()
+    sb = get_client()
+    await sb.table("weekly_fdr").upsert(
+        {"project_id": project_id, "pm_id": pm_id, "week_date": week_date, **fields},
+        on_conflict="project_id,week_date",
+    ).execute()
 
 
 async def get_fdr_for_week(week_date: str) -> list[WeeklyFdr]:
-    async with _conn() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM weekly_fdr WHERE week_date = ?", (week_date,)
-        ) as cur:
-            rows = await cur.fetchall()
-    return [WeeklyFdr(**dict(r)) for r in rows]
+    sb = get_client()
+    resp = await sb.table("weekly_fdr").select("*").eq("week_date", week_date).execute()
+    return [WeeklyFdr(**r) for r in resp.data]
 
 
 async def get_fdr_for_project_week(
     project_id: int, week_date: str
 ) -> Optional[WeeklyFdr]:
-    async with _conn() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            "SELECT * FROM weekly_fdr WHERE project_id = ? AND week_date = ?",
-            (project_id, week_date),
-        ) as cur:
-            row = await cur.fetchone()
-    if row is None:
+    sb = get_client()
+    resp = (
+        await sb.table("weekly_fdr")
+        .select("*")
+        .eq("project_id", project_id)
+        .eq("week_date", week_date)
+        .execute()
+    )
+    if not resp.data:
         return None
-    return WeeklyFdr(**dict(row))
+    return WeeklyFdr(**resp.data[0])
 
 
 async def mark_missing_fdrs(week_date: str, project_ids: list[int]) -> None:
     """Insert row_status='missing' for every project that never started a report."""
-    async with _conn() as db:
-        await db.execute("PRAGMA foreign_keys = ON")
-        for pid in project_ids:
-            await db.execute(
-                """
-                INSERT INTO weekly_fdr (project_id, pm_id, week_date, row_status)
-                SELECT ?, pm_id, ?, 'missing' FROM projects WHERE id = ?
-                ON CONFLICT(project_id, week_date) DO NOTHING
-                """,
-                (pid, week_date, pid),
-            )
-        await db.commit()
+    sb = get_client()
+    for pid in project_ids:
+        proj_resp = await sb.table("projects").select("pm_id").eq("id", pid).execute()
+        if not proj_resp.data:
+            continue
+        pm_id = proj_resp.data[0]["pm_id"]
+        await sb.table("weekly_fdr").upsert(
+            {"project_id": pid, "pm_id": pm_id, "week_date": week_date, "row_status": "missing"},
+            on_conflict="project_id,week_date",
+            ignore_duplicates=True,
+        ).execute()
 
 
 async def get_latest_fdr_for_project(project_id: int) -> Optional[WeeklyFdr]:
-    async with _conn() as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute(
-            """
-            SELECT * FROM weekly_fdr
-            WHERE project_id = ?
-            ORDER BY week_date DESC
-            LIMIT 1
-            """,
-            (project_id,),
-        ) as cur:
-            row = await cur.fetchone()
-    if row is None:
+    sb = get_client()
+    resp = (
+        await sb.table("weekly_fdr")
+        .select("*")
+        .eq("project_id", project_id)
+        .order("week_date", desc=True)
+        .limit(1)
+        .execute()
+    )
+    if not resp.data:
         return None
-    return WeeklyFdr(**dict(row))
+    return WeeklyFdr(**resp.data[0])
