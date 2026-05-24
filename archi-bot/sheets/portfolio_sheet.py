@@ -65,7 +65,7 @@ async def update_portfolio_map(config: Config) -> None:
         rows.append((project.code, _project_row(project, pm_name, fdr)))
 
     def _sync() -> None:
-        client = make_gspread_client(config, readonly=False)
+        client = make_gspread_client(config)
         ss = client.open_by_key(config.google_portfolio_sheet_id)
 
         try:

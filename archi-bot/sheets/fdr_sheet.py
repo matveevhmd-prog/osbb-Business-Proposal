@@ -56,7 +56,7 @@ async def write_fdr_row(
     """Upsert one FDR row into the week's tab of the FDR Google Sheet."""
 
     def _sync() -> None:
-        client = make_gspread_client(config, readonly=False)
+        client = make_gspread_client(config)
         ss = client.open_by_key(config.google_fdr_sheet_id)
 
         try:

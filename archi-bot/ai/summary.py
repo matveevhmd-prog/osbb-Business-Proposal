@@ -1,21 +1,17 @@
 from __future__ import annotations
 
 import asyncio
-import base64
-import json
 import logging
 from dataclasses import dataclass
 from typing import Optional
 
 import anthropic
 import gspread
-from google.oauth2.service_account import Credentials
 
 from config import Config
+from sheets.auth import make_gspread_client
 
 logger = logging.getLogger(__name__)
-
-_SCOPES = ["https://www.googleapis.com/auth/drive.readonly"]
 
 _SYSTEM_PROMPT = (
     "Ти — COO-аналітик архітектурної компанії. "
@@ -49,36 +45,6 @@ class ProjectMetrics:
     hours_utilization_pct: float
     margin_risk: bool      # projected_margin_pct < 25
     etc_overrun: bool      # actual_hours > planned_hours * (completion_pct / 100)
-
-
-def _load_service_account_info(raw: str) -> dict:
-    raw = raw.strip()
-    # Try direct JSON
-    try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
-    # Try base64-encoded JSON
-    try:
-        decoded = base64.b64decode(raw).decode("utf-8")
-        return json.loads(decoded)
-    except Exception:
-        pass
-    # Try file path
-    try:
-        with open(raw, "r", encoding="utf-8") as fh:
-            return json.load(fh)
-    except Exception:
-        pass
-    raise ValueError(
-        "GOOGLE_SERVICE_ACCOUNT_JSON must be raw JSON, base64-encoded JSON, or a file path"
-    )
-
-
-def _make_gspread_client(config: Config) -> gspread.Client:
-    info = _load_service_account_info(config.google_service_account_json)
-    creds = Credentials.from_service_account_info(info, scopes=_SCOPES)
-    return gspread.authorize(creds)
 
 
 def _safe_float(val: object) -> float:
@@ -206,7 +172,7 @@ def _build_prompt(projects: list[ProjectMetrics]) -> str:
 
 
 def _fetch_projects_sync(config: Config) -> list[ProjectMetrics]:
-    client = _make_gspread_client(config)
+    client = make_gspread_client(config)
     spreadsheet = client.open_by_key(config.abmk_file_id)
     worksheet = spreadsheet.get_worksheet(0)
     return _parse_projects(worksheet)

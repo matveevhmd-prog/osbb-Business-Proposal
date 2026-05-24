@@ -2,4 +2,5 @@
 *.pyc
 __pycache__/
 *.db
+data/google_token.json
 

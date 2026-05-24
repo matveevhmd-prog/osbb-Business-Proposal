@@ -8,7 +8,8 @@ load_dotenv()
 @dataclass(frozen=True)
 class Config:
     telegram_bot_token: str
-    google_service_account_json: str  # base64 string or file path
+    google_client_id: str
+    google_client_secret: str
     google_fdr_sheet_id: str
     google_portfolio_sheet_id: str
     anthropic_api_key: str
@@ -28,7 +29,8 @@ def load_config() -> Config:
 
     cfg = Config(
         telegram_bot_token=require("TELEGRAM_BOT_TOKEN"),
-        google_service_account_json=require("GOOGLE_SERVICE_ACCOUNT_JSON"),
+        google_client_id=require("GOOGLE_CLIENT_ID"),
+        google_client_secret=require("GOOGLE_CLIENT_SECRET"),
         google_fdr_sheet_id=require("GOOGLE_FDR_SHEET_ID"),
         google_portfolio_sheet_id=require("GOOGLE_PORTFOLIO_SHEET_ID"),
         anthropic_api_key=require("ANTHROPIC_API_KEY"),
