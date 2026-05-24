@@ -33,15 +33,17 @@ async def main() -> None:
     dp["config"] = config
 
     # Handlers
-    from handlers.fdr_flow import router as fdr_router
-    dp.include_router(fdr_router)
-    # from handlers.admin_commands import router as admin_router
-    # from handlers.owner_commands import router as owner_router
-    # from handlers.pm_commands    import router as pm_router
-    # dp.include_routers(admin_router, owner_router, pm_router)
+    from handlers.admin_commands import router as admin_router
+    from handlers.fdr_flow       import router as fdr_router
+    from handlers.pm_commands    import router as pm_router
+    dp.include_routers(admin_router, pm_router, fdr_router)
+    # from handlers.owner_commands import router as owner_router  (future)
+
+    # Make dp.storage available to handlers that need to build FSMContext for other users
+    dp["storage"] = dp.storage
 
     scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
-    register_jobs(scheduler, bot, config)
+    register_jobs(scheduler, bot, config, dp.storage)
     scheduler.start()
     logger.info("Scheduler started with %d jobs", len(scheduler.get_jobs()))
 
