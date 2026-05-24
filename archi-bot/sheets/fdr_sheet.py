@@ -1,15 +1,16 @@
+"""CSV export for weekly FDR records — reads directly from SQLite."""
 from __future__ import annotations
 
-import asyncio
-import logging
+import csv
+import io
+from datetime import date, timedelta
+from typing import Optional
 
-import gspread
-
-from config import Config
-from database.queries import Project, WeeklyFdr
-from sheets.auth import make_gspread_client
-
-logger = logging.getLogger(__name__)
+from database.queries import (
+    get_all_active_projects,
+    get_fdr_for_week,
+    get_user,
+)
 
 _HEADERS = [
     "Тиждень", "Код проекту", "Назва проекту", "PM",
@@ -21,61 +22,62 @@ _HEADERS = [
 ]
 
 
-def _opt(val: object) -> object:
-    return "" if val is None else val
+def _opt(val: object) -> str:
+    return "" if val is None else str(val)
 
 
-def _row_values(project: Project, fdr: WeeklyFdr, pm_name: str) -> list:
-    return [
-        fdr.week_date,
-        project.code,
-        project.name,
-        pm_name,
-        _opt(fdr.actual_readiness_pct),
-        _opt(fdr.planned_readiness_pct),
-        _opt(fdr.planned_hours_remaining),
-        _opt(fdr.etc_hours),
-        _opt(fdr.next_act_amount),
-        _opt(fdr.next_act_date),
-        _opt(fdr.planned_margin_pct),
-        _opt(fdr.forecast_margin_pct),
-        _opt(fdr.plan_next_week),
-        _opt(fdr.comments),
-        _opt(fdr.problems),
-        _opt(fdr.help_needed),
-        fdr.row_status,
-    ]
+def _current_friday() -> str:
+    today = date.today()
+    return (today - timedelta(days=(today.weekday() - 4) % 7)).isoformat()
 
 
-async def write_fdr_row(
-    config: Config,
-    project: Project,
-    fdr: WeeklyFdr,
-    pm_name: str,
-) -> None:
-    """Upsert one FDR row into the week's tab of the FDR Google Sheet."""
+async def export_fdr_csv(week_date: Optional[str] = None) -> tuple[str, bytes]:
+    """
+    Generate a CSV for one week's FDR records.
+    Defaults to the most recent Friday if week_date is omitted.
+    Returns (filename, utf-8-sig bytes).
+    """
+    if week_date is None:
+        week_date = _current_friday()
 
-    def _sync() -> None:
-        client = make_gspread_client(config)
-        ss = client.open_by_key(config.google_fdr_sheet_id)
+    records = await get_fdr_for_week(week_date)
 
-        try:
-            ws = ss.worksheet(fdr.week_date)
-        except gspread.WorksheetNotFound:
-            ws = ss.add_worksheet(title=fdr.week_date, rows=500, cols=len(_HEADERS))
-            ws.append_row(_HEADERS, value_input_option="USER_ENTERED")
+    # Build project lookup once
+    all_projects = await get_all_active_projects()
+    proj_map = {p.id: p for p in all_projects}
 
-        row_data = _row_values(project, fdr, pm_name)
-        all_values = ws.get_all_values()
+    pm_cache: dict[int, str] = {}
 
-        # Update in place if the project code is already in this week's tab
-        for i, row in enumerate(all_values):
-            if len(row) > 1 and row[1] == project.code:
-                ws.update(f"A{i + 1}", [row_data], value_input_option="USER_ENTERED")
-                logger.info("Updated FDR row %s / %s", project.code, fdr.week_date)
-                return
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(_HEADERS)
 
-        ws.append_row(row_data, value_input_option="USER_ENTERED")
-        logger.info("Appended FDR row %s / %s", project.code, fdr.week_date)
+    for fdr in records:
+        project = proj_map.get(fdr.project_id)
+        if fdr.pm_id not in pm_cache:
+            pm = await get_user(fdr.pm_id)
+            pm_cache[fdr.pm_id] = pm.name if pm else str(fdr.pm_id)
 
-    await asyncio.to_thread(_sync)
+        writer.writerow([
+            fdr.week_date,
+            project.code if project else str(fdr.project_id),
+            project.name if project else "",
+            pm_cache[fdr.pm_id],
+            _opt(fdr.actual_readiness_pct),
+            _opt(fdr.planned_readiness_pct),
+            _opt(fdr.planned_hours_remaining),
+            _opt(fdr.etc_hours),
+            _opt(fdr.next_act_amount),
+            _opt(fdr.next_act_date),
+            _opt(fdr.planned_margin_pct),
+            _opt(fdr.forecast_margin_pct),
+            _opt(fdr.plan_next_week),
+            _opt(fdr.comments),
+            _opt(fdr.problems),
+            _opt(fdr.help_needed),
+            fdr.row_status,
+        ])
+
+    filename = f"fdr_{week_date}.csv"
+    # utf-8-sig so Excel opens Cyrillic correctly without a BOM dialog
+    return filename, buf.getvalue().encode("utf-8-sig")

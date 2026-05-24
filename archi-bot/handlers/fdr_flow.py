@@ -34,11 +34,9 @@ from aiogram.types import (
     Message,
 )
 
-from config import Config
 from database.queries import (
     Project,
     get_fdr_for_project_week,
-    get_project_by_code,
     get_projects_for_pm,
     get_user,
     upsert_weekly_fdr,
@@ -487,7 +485,7 @@ async def _show_confirm(answer_fn, state: FSMContext) -> None:
 # ---------------------------------------------------------------------------
 
 @router.callback_query(StateFilter(FdrStates.confirm), F.data == "fdr_save")
-async def cb_save(call: CallbackQuery, state: FSMContext, config: Config) -> None:
+async def cb_save(call: CallbackQuery, state: FSMContext) -> None:
     data = await state.get_data()
     draft: dict = data.get("draft", {})
     week: str = data.get("week", "")
@@ -503,18 +501,6 @@ async def cb_save(call: CallbackQuery, state: FSMContext, config: Config) -> Non
         row_status="filled",
         **draft,
     )
-
-    # Mirror to Google Sheets (non-critical — log and continue on failure)
-    try:
-        from sheets.fdr_sheet import write_fdr_row
-        project = await get_project_by_code(proj_code)
-        fdr_record = await get_fdr_for_project_week(proj_id, week)
-        pm = await get_user(call.from_user.id)
-        pm_name = pm.name if pm else str(call.from_user.id)
-        if project and fdr_record:
-            await write_fdr_row(config, project, fdr_record, pm_name)
-    except Exception as exc:
-        logger.warning("Sheet write failed for %s: %s", proj_code, exc)
 
     # Remove this project from the pending list
     pending_ids = [pid for pid in pending_ids if pid != proj_id]

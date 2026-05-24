@@ -24,12 +24,6 @@ async def main() -> None:
     await init_db()
     logger.info("Database initialised")
 
-    # Ensure Google credentials are valid before the bot starts.
-    # On first run this opens a browser; afterwards it silently refreshes the token.
-    from sheets.auth import get_credentials
-    await asyncio.to_thread(get_credentials, config)
-    logger.info("Google credentials ready")
-
     bot = Bot(
         token=config.telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),

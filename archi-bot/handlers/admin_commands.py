@@ -248,3 +248,49 @@ async def cmd_trigger_summary(message: Message, config: Config) -> None:
     except Exception as exc:
         logger.exception("trigger_summary failed")
         await message.answer(f"⚠️ Помилка: {exc}")
+
+
+# ---------------------------------------------------------------------------
+# /export [YYYY-MM-DD] — generate and send CSV files to the caller
+# ---------------------------------------------------------------------------
+
+@router.message(Command("export"))
+async def cmd_export(message: Message, config: Config) -> None:
+    """
+    Send two CSV files:
+      • fdr_<week>.csv     — all FDR records for the week
+      • portfolio_<date>.csv — current portfolio snapshot
+
+    Optional arg: week date in YYYY-MM-DD format (defaults to latest Friday).
+    """
+    if not await _is_admin(message, config):
+        return
+
+    parts = message.text.split()
+    week_arg = parts[1] if len(parts) > 1 else None
+
+    await message.answer("⏳ Генерую CSV…")
+
+    from aiogram.types import BufferedInputFile
+    from sheets.fdr_sheet import export_fdr_csv
+    from sheets.portfolio_sheet import export_portfolio_csv
+
+    try:
+        fdr_name, fdr_bytes = await export_fdr_csv(week_arg)
+        await message.answer_document(
+            BufferedInputFile(fdr_bytes, filename=fdr_name),
+            caption=f"📊 FDR звіт ({fdr_name})",
+        )
+    except Exception as exc:
+        logger.exception("export FDR failed")
+        await message.answer(f"⚠️ FDR: {exc}")
+
+    try:
+        portfolio_name, portfolio_bytes = await export_portfolio_csv()
+        await message.answer_document(
+            BufferedInputFile(portfolio_bytes, filename=portfolio_name),
+            caption=f"📂 Портфель ({portfolio_name})",
+        )
+    except Exception as exc:
+        logger.exception("export portfolio failed")
+        await message.answer(f"⚠️ Портфель: {exc}")

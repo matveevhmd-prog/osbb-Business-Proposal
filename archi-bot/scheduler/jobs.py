@@ -141,14 +141,23 @@ def register_jobs(
         )
 
     # ------------------------------------------------------------------
-    # Saturday 08:00 — rebuild portfolio map
+    # Saturday 08:00 — send portfolio CSV snapshot to owner
     # ------------------------------------------------------------------
     async def _portfolio_update() -> None:
-        from sheets.portfolio_sheet import update_portfolio_map
+        from aiogram.types import BufferedInputFile
+        from sheets.portfolio_sheet import export_portfolio_csv
 
         logger.info("Scheduler fired: portfolio_update")
-        await update_portfolio_map(config)
-        logger.info("Portfolio map updated")
+        try:
+            filename, data = await export_portfolio_csv()
+            await bot.send_document(
+                chat_id=config.owner_telegram_id,
+                document=BufferedInputFile(data, filename=filename),
+                caption="📂 Щотижневий знімок портфеля",
+            )
+            logger.info("Portfolio CSV sent to owner")
+        except Exception as exc:
+            logger.error("portfolio_update failed: %s", exc)
 
     # ------------------------------------------------------------------
     # Monday 09:00 — AI summary → owner
