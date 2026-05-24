@@ -232,6 +232,14 @@ async def cmd_trigger_summary(message: Message, config: Config) -> None:
     if not await _is_admin(message, config):
         return
 
+    if not config.anthropic_api_key:
+        await message.answer(
+            "⚠️ <b>AI summary вимкнено</b> — ANTHROPIC_API_KEY не налаштовано.\n"
+            "Додайте ключ у .env та перезапустіть бота.",
+            parse_mode="HTML",
+        )
+        return
+
     await message.answer("⏳ Генерую AI-summary…")
     try:
         from ai.summary import generate_summary

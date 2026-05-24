@@ -201,9 +201,12 @@ def register_jobs(
         id="portfolio_update",
         replace_existing=True,
     )
-    scheduler.add_job(
-        _weekly_summary,
-        CronTrigger(day_of_week="mon", hour=9, minute=0),
-        id="weekly_summary",
-        replace_existing=True,
-    )
+    if config.anthropic_api_key:
+        scheduler.add_job(
+            _weekly_summary,
+            CronTrigger(day_of_week="mon", hour=9, minute=0),
+            id="weekly_summary",
+            replace_existing=True,
+        )
+    else:
+        logger.warning("weekly_summary job skipped — ANTHROPIC_API_KEY not configured")

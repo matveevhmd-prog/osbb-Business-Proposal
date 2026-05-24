@@ -129,6 +129,9 @@ def _build_prompt(projects: list[ProjectMetrics]) -> str:
 
 
 async def generate_summary(config: Config) -> str:
+    if not config.anthropic_api_key:
+        return "⚠️ AI summary вимкнено — ANTHROPIC_API_KEY не налаштовано."
+
     try:
         projects = await _fetch_projects()
     except Exception as exc:
