@@ -7,6 +7,7 @@ from aiogram.enums import ParseMode
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import load_config
+from database.fsm_storage import SqliteStorage
 from database.models import init_db
 from scheduler.jobs import register_jobs
 
@@ -27,7 +28,8 @@ async def main() -> None:
         token=config.telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    dp = Dispatcher()
+    storage = SqliteStorage("data/fsm_storage.db")
+    dp = Dispatcher(storage=storage)
 
     # Store config on dispatcher so handlers can access it via bot.get("config")
     dp["config"] = config
@@ -52,6 +54,7 @@ async def main() -> None:
         await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
     finally:
         scheduler.shutdown(wait=False)
+        await storage.close()
         await bot.session.close()
         logger.info("Bot stopped")
 
