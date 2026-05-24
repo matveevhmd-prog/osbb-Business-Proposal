@@ -1,5 +1,7 @@
 import asyncio
 import logging
+import os
+from pathlib import Path
 
 from aiogram import Bot, Dispatcher
 from aiogram.client.default import DefaultBotProperties
@@ -8,7 +10,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 
 from config import load_config
 from database.fsm_storage import SqliteStorage
-from database.models import init_db
+from database.models import DB_PATH, init_db
 from scheduler.jobs import register_jobs
 
 logging.basicConfig(
@@ -21,14 +23,17 @@ logger = logging.getLogger(__name__)
 async def main() -> None:
     config = load_config()
 
+    db_dir = Path(DB_PATH).parent
+    db_dir.mkdir(parents=True, exist_ok=True)
+
     await init_db()
-    logger.info("Database initialised")
+    logger.info("Database initialised at %s", DB_PATH)
 
     bot = Bot(
         token=config.telegram_bot_token,
         default=DefaultBotProperties(parse_mode=ParseMode.HTML),
     )
-    storage = SqliteStorage("data/fsm_storage.db")
+    storage = SqliteStorage(str(db_dir / "fsm_storage.db"))
     dp = Dispatcher(storage=storage)
 
     # Store config on dispatcher so handlers can access it via bot.get("config")

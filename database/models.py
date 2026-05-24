@@ -1,6 +1,8 @@
+import os
+
 import aiosqlite
 
-DB_PATH = "archi_bot.db"
+DB_PATH = os.getenv("DB_PATH", "/app/data/archi_bot.db")
 
 CREATE_USERS = """
 CREATE TABLE IF NOT EXISTS users (
