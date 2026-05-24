@@ -34,9 +34,11 @@ from aiogram.types import (
     Message,
 )
 
+from config import Config
 from database.queries import (
     Project,
     get_fdr_for_project_week,
+    get_project_by_code,
     get_projects_for_pm,
     get_user,
     upsert_weekly_fdr,
@@ -291,4 +293,271 @@ async def cb_skip(call: CallbackQuery, state: FSMContext) -> None:
         await call.message.answer(next_prompt, parse_mode="HTML", reply_markup=_skip_keyboard())
 
     await state.set_state(next_state)
+    await call.answer()
+
+
+# ---------------------------------------------------------------------------
+# Generic step helpers
+# ---------------------------------------------------------------------------
+
+def _fmt(val: object, suffix: str = "", money: bool = False) -> str:
+    if val is None or val == "":
+        return "—"
+    if isinstance(val, (int, float)):
+        n = float(val)
+        if money:
+            return f"{n:,.0f}{suffix}".replace(",", " ")
+        return f"{int(n)}{suffix}" if n == int(n) else f"{n:.1f}{suffix}"
+    return f"{val}{suffix}"
+
+
+async def _advance_to(
+    answer_fn,
+    state: FSMContext,
+    next_state: State,
+    prompt: str,
+) -> None:
+    await state.set_state(next_state)
+    if next_state == FdrStates.help_needed:
+        await answer_fn(prompt, parse_mode="HTML", reply_markup=_yn_keyboard())
+    else:
+        await answer_fn(prompt, parse_mode="HTML", reply_markup=_skip_keyboard())
+
+
+async def _handle_float_step(
+    message: Message, state: FSMContext, state_name: str
+) -> None:
+    raw = message.text.strip().replace(",", ".")
+    try:
+        value = float(raw)
+    except ValueError:
+        await message.answer(
+            "⚠️ Введіть число, наприклад: <b>42.5</b>", parse_mode="HTML"
+        )
+        return
+    draft_key, next_state, next_prompt = _SKIP_STATE_CHAIN[state_name]
+    data = await state.get_data()
+    draft = data.get("draft", {})
+    draft[draft_key] = value
+    await state.update_data(draft=draft)
+    await _advance_to(message.answer, state, next_state, next_prompt)
+
+
+async def _handle_text_step(
+    message: Message, state: FSMContext, state_name: str
+) -> None:
+    value = message.text.strip() or None
+    draft_key, next_state, next_prompt = _SKIP_STATE_CHAIN[state_name]
+    data = await state.get_data()
+    draft = data.get("draft", {})
+    draft[draft_key] = value
+    await state.update_data(draft=draft)
+    await _advance_to(message.answer, state, next_state, next_prompt)
+
+
+# ---------------------------------------------------------------------------
+# Steps 3–9 — numeric inputs (all optional, each has a skip button)
+# ---------------------------------------------------------------------------
+
+@router.message(StateFilter(FdrStates.planned_readiness))
+async def msg_planned_readiness(message: Message, state: FSMContext) -> None:
+    await _handle_float_step(message, state, "planned_readiness")
+
+
+@router.message(StateFilter(FdrStates.hours_remaining))
+async def msg_hours_remaining(message: Message, state: FSMContext) -> None:
+    await _handle_float_step(message, state, "hours_remaining")
+
+
+@router.message(StateFilter(FdrStates.etc_hours))
+async def msg_etc_hours(message: Message, state: FSMContext) -> None:
+    await _handle_float_step(message, state, "etc_hours")
+
+
+@router.message(StateFilter(FdrStates.next_act_amount))
+async def msg_next_act_amount(message: Message, state: FSMContext) -> None:
+    await _handle_float_step(message, state, "next_act_amount")
+
+
+@router.message(StateFilter(FdrStates.next_act_date))
+async def msg_next_act_date(message: Message, state: FSMContext) -> None:
+    from datetime import date as _date
+    raw = message.text.strip()
+    try:
+        _date.fromisoformat(raw)
+    except ValueError:
+        await message.answer(
+            "⚠️ Введіть дату у форматі <b>РРРР-ММ-ДД</b>, наприклад: <b>2026-06-20</b>\n"
+            "Або натисніть «пропустити».",
+            parse_mode="HTML",
+        )
+        return
+    draft_key, next_state, next_prompt = _SKIP_STATE_CHAIN["next_act_date"]
+    data = await state.get_data()
+    draft = data.get("draft", {})
+    draft[draft_key] = raw
+    await state.update_data(draft=draft)
+    await _advance_to(message.answer, state, next_state, next_prompt)
+
+
+@router.message(StateFilter(FdrStates.planned_margin))
+async def msg_planned_margin(message: Message, state: FSMContext) -> None:
+    await _handle_float_step(message, state, "planned_margin")
+
+
+@router.message(StateFilter(FdrStates.forecast_margin))
+async def msg_forecast_margin(message: Message, state: FSMContext) -> None:
+    await _handle_float_step(message, state, "forecast_margin")
+
+
+# ---------------------------------------------------------------------------
+# Steps 10–11 — free-text inputs (all optional)
+# ---------------------------------------------------------------------------
+
+@router.message(StateFilter(FdrStates.plan_next_week))
+async def msg_plan_next_week(message: Message, state: FSMContext) -> None:
+    await _handle_text_step(message, state, "plan_next_week")
+
+
+@router.message(StateFilter(FdrStates.comments))
+async def msg_comments(message: Message, state: FSMContext) -> None:
+    await _handle_text_step(message, state, "comments")
+
+
+@router.message(StateFilter(FdrStates.problems))
+async def msg_problems(message: Message, state: FSMContext) -> None:
+    await _handle_text_step(message, state, "problems")
+
+
+# ---------------------------------------------------------------------------
+# Step 11b — help_needed (yes / no inline)
+# ---------------------------------------------------------------------------
+
+@router.callback_query(StateFilter(FdrStates.help_needed), F.data.startswith("fdr_yn:"))
+async def cb_help_needed(call: CallbackQuery, state: FSMContext) -> None:
+    answer = "yes" if call.data.endswith(":yes") else "no"
+    data = await state.get_data()
+    draft = data.get("draft", {})
+    draft["help_needed"] = answer
+    await state.update_data(draft=draft)
+    await call.message.edit_reply_markup(reply_markup=None)
+    await _show_confirm(call.message.answer, state)
+    await call.answer()
+
+
+# ---------------------------------------------------------------------------
+# Confirm step
+# ---------------------------------------------------------------------------
+
+def _build_confirm_text(proj_code: str, draft: dict) -> str:
+    yn = {"yes": "Так ⚠️", "no": "Ні"}.get(draft.get("help_needed", ""), "—")
+    lines = [f"📋 <b>Проект {proj_code} — перевірте дані:</b>\n"]
+    lines += [
+        f"Фактична готовність:     <b>{_fmt(draft.get('actual_readiness_pct'), '%')}</b>",
+        f"Планова готовність:      <b>{_fmt(draft.get('planned_readiness_pct'), '%')}</b>",
+        f"Год. до кінця (план):    <b>{_fmt(draft.get('planned_hours_remaining'), ' год')}</b>",
+        f"ETC год.:                <b>{_fmt(draft.get('etc_hours'), ' год')}</b>",
+        f"Наступний акт:           <b>{_fmt(draft.get('next_act_amount'), ' грн', money=True)}</b>",
+        f"Дата акту:               <b>{_fmt(draft.get('next_act_date'))}</b>",
+        f"Планова маржа:           <b>{_fmt(draft.get('planned_margin_pct'), '%')}</b>",
+        f"Прогнозна маржа:         <b>{_fmt(draft.get('forecast_margin_pct'), '%')}</b>",
+        f"План на тиждень:         <b>{_fmt(draft.get('plan_next_week'))}</b>",
+        f"Коментарі:               <b>{_fmt(draft.get('comments'))}</b>",
+        f"Проблеми:                <b>{_fmt(draft.get('problems'))}</b>",
+        f"Потрібна допомога:       <b>{yn}</b>",
+    ]
+    return "\n".join(lines)
+
+
+async def _show_confirm(answer_fn, state: FSMContext) -> None:
+    data = await state.get_data()
+    draft = data.get("draft", {})
+    proj_code = data.get("current_project_code", "?")
+    text = _build_confirm_text(proj_code, draft)
+    await answer_fn(
+        text + "\n\n<i>Все вірно?</i>",
+        parse_mode="HTML",
+        reply_markup=_confirm_keyboard(),
+    )
+    await state.set_state(FdrStates.confirm)
+
+
+# ---------------------------------------------------------------------------
+# Save — persist to DB + Google Sheets, then loop back to project list
+# ---------------------------------------------------------------------------
+
+@router.callback_query(StateFilter(FdrStates.confirm), F.data == "fdr_save")
+async def cb_save(call: CallbackQuery, state: FSMContext, config: Config) -> None:
+    data = await state.get_data()
+    draft: dict = data.get("draft", {})
+    week: str = data.get("week", "")
+    proj_id: int = data.get("current_project_id")
+    proj_code: str = data.get("current_project_code", "")
+    pending_ids: list[int] = list(data.get("pending_ids", []))
+
+    # Persist to SQLite
+    await upsert_weekly_fdr(
+        project_id=proj_id,
+        pm_id=call.from_user.id,
+        week_date=week,
+        row_status="filled",
+        **draft,
+    )
+
+    # Mirror to Google Sheets (non-critical — log and continue on failure)
+    try:
+        from sheets.fdr_sheet import write_fdr_row
+        project = await get_project_by_code(proj_code)
+        fdr_record = await get_fdr_for_project_week(proj_id, week)
+        pm = await get_user(call.from_user.id)
+        pm_name = pm.name if pm else str(call.from_user.id)
+        if project and fdr_record:
+            await write_fdr_row(config, project, fdr_record, pm_name)
+    except Exception as exc:
+        logger.warning("Sheet write failed for %s: %s", proj_code, exc)
+
+    # Remove this project from the pending list
+    pending_ids = [pid for pid in pending_ids if pid != proj_id]
+    await state.update_data(
+        pending_ids=pending_ids,
+        current_project_id=None,
+        current_project_code=None,
+        draft={},
+    )
+
+    await call.message.edit_reply_markup(reply_markup=None)
+
+    if not pending_ids:
+        await call.message.answer("🎉 Всі проекти заповнені! Дякую за звіт.")
+        await state.clear()
+    else:
+        remaining = await get_projects_for_pm(call.from_user.id, status="active")
+        remaining = [p for p in remaining if p.id in pending_ids]
+        await state.set_state(FdrStates.choosing_project)
+        await call.message.answer(
+            f"✅ Збережено!\n\nЗалишилось: <b>{len(remaining)}</b> проект(ів)\n\nОберіть наступний:",
+            parse_mode="HTML",
+            reply_markup=_projects_keyboard(remaining),
+        )
+
+    await call.answer()
+
+
+# ---------------------------------------------------------------------------
+# Redo — clear draft, restart from step 1 for the same project
+# ---------------------------------------------------------------------------
+
+@router.callback_query(StateFilter(FdrStates.confirm), F.data == "fdr_redo")
+async def cb_redo(call: CallbackQuery, state: FSMContext) -> None:
+    data = await state.get_data()
+    proj_code = data.get("current_project_code", "?")
+    await state.update_data(draft={})
+    await call.message.edit_reply_markup(reply_markup=None)
+    await call.message.answer(
+        f"🔄 Починаємо заново для <b>{proj_code}</b>\n\n"
+        f"<b>Крок 1/11.</b> Фактична готовність проекту, %\n"
+        f"(Введіть число від 0 до 100)",
+        parse_mode="HTML",
+    )
+    await state.set_state(FdrStates.actual_readiness)
     await call.answer()

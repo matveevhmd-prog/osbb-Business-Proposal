@@ -52,8 +52,14 @@ def register_jobs(scheduler: AsyncIOScheduler, bot, config: Config) -> None:
         id="fdr_final",
         replace_existing=True,
     )
+    async def _portfolio_update() -> None:
+        from sheets.portfolio_sheet import update_portfolio_map
+        logger.info("Scheduler fired: portfolio_update")
+        await update_portfolio_map(config)
+        logger.info("Portfolio map updated")
+
     scheduler.add_job(
-        lambda: _noop("portfolio_update"),
+        _portfolio_update,
         CronTrigger(day_of_week="sat", hour=8, minute=0),
         id="portfolio_update",
         replace_existing=True,

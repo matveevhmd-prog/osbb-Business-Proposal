@@ -32,12 +32,13 @@ async def main() -> None:
     # Store config on dispatcher so handlers can access it via bot.get("config")
     dp["config"] = config
 
-    # Handlers (registered here once each module is built)
+    # Handlers
+    from handlers.fdr_flow import router as fdr_router
+    dp.include_router(fdr_router)
     # from handlers.admin_commands import router as admin_router
     # from handlers.owner_commands import router as owner_router
-    # from handlers.pm_commands   import router as pm_router
-    # from handlers.fdr_flow      import router as fdr_router
-    # dp.include_routers(admin_router, owner_router, pm_router, fdr_router)
+    # from handlers.pm_commands    import router as pm_router
+    # dp.include_routers(admin_router, owner_router, pm_router)
 
     scheduler = AsyncIOScheduler(timezone="Europe/Kyiv")
     register_jobs(scheduler, bot, config)
