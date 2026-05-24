@@ -166,6 +166,7 @@ async def start_fdr_for_pm(bot, pm_telegram_id: int, dp_storage) -> None:
     key = StorageKey(bot_id=bot.id, chat_id=pm_telegram_id, user_id=pm_telegram_id)
     ctx = FSMContext(storage=dp_storage, key=key)
 
+    await ctx.clear()
     await ctx.set_state(FdrStates.choosing_project)
     await ctx.update_data(
         week=week,
@@ -547,3 +548,17 @@ async def cb_redo(call: CallbackQuery, state: FSMContext) -> None:
     )
     await state.set_state(FdrStates.actual_readiness)
     await call.answer()
+
+
+# ---------------------------------------------------------------------------
+# Stale-keyboard fallback — MUST be last; catches any fdr_* callback whose
+# state filter didn't match above (e.g. after a bot redeploy)
+# ---------------------------------------------------------------------------
+
+@router.callback_query(F.data.startswith("fdr_"))
+async def cb_stale_fdr(call: CallbackQuery) -> None:
+    await call.answer(
+        "Сесія застаріла — натисніть /fdr щоб почати знову.",
+        show_alert=True,
+    )
+    await call.message.edit_reply_markup(reply_markup=None)
