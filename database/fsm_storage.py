@@ -53,7 +53,7 @@ class SqliteStorage(BaseStorage):
             ON CONFLICT(bot_id, chat_id, user_id, destiny)
             DO UPDATE SET state = excluded.state
             """,
-            (*self._k(key), state),
+            (*self._k(key), str(state) if state is not None else None),
         )
         await db.commit()
 
